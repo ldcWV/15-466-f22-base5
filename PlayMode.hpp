@@ -36,4 +36,15 @@ struct PlayMode : Mode {
 		//camera is at player's head and will be pitched by mouse up/down motion:
 		Scene::Camera *camera = nullptr;
 	} player;
+
+	struct Turtle {
+		bool dead = false;
+		WalkPoint at;
+		glm::vec2 dir;
+		Scene::Transform *transform = nullptr;
+	};
+
+	static constexpr int MAX_TURTLES = 100;
+	int num_turtles = 0;
+	Turtle turtles[MAX_TURTLES];
 };

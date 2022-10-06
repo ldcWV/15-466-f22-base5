@@ -13,23 +13,23 @@
 
 #include <random>
 
-GLuint phonebank_meshes_for_lit_color_texture_program = 0;
-Load< MeshBuffer > phonebank_meshes(LoadTagDefault, []() -> MeshBuffer const * {
+GLuint cool_meshes_for_lit_color_texture_program = 0;
+Load< MeshBuffer > cool_meshes(LoadTagDefault, []() -> MeshBuffer const * {
 	MeshBuffer const *ret = new MeshBuffer(data_path("cool.pnct"));
-	phonebank_meshes_for_lit_color_texture_program = ret->make_vao_for_program(lit_color_texture_program->program);
+	cool_meshes_for_lit_color_texture_program = ret->make_vao_for_program(lit_color_texture_program->program);
 	return ret;
 });
 
-Load< Scene > phonebank_scene(LoadTagDefault, []() -> Scene const * {
+Load< Scene > cool_scene(LoadTagDefault, []() -> Scene const * {
 	return new Scene(data_path("cool.scene"), [&](Scene &scene, Scene::Transform *transform, std::string const &mesh_name){
-		Mesh const &mesh = phonebank_meshes->lookup(mesh_name);
+		Mesh const &mesh = cool_meshes->lookup(mesh_name);
 
 		scene.drawables.emplace_back(transform);
 		Scene::Drawable &drawable = scene.drawables.back();
 
 		drawable.pipeline = lit_color_texture_program_pipeline;
 
-		drawable.pipeline.vao = phonebank_meshes_for_lit_color_texture_program;
+		drawable.pipeline.vao = cool_meshes_for_lit_color_texture_program;
 		drawable.pipeline.type = mesh.type;
 		drawable.pipeline.start = mesh.start;
 		drawable.pipeline.count = mesh.count;
@@ -38,13 +38,13 @@ Load< Scene > phonebank_scene(LoadTagDefault, []() -> Scene const * {
 });
 
 WalkMesh const *walkmesh = nullptr;
-Load< WalkMeshes > phonebank_walkmeshes(LoadTagDefault, []() -> WalkMeshes const * {
+Load< WalkMeshes > cool_walkmeshes(LoadTagDefault, []() -> WalkMeshes const * {
 	WalkMeshes *ret = new WalkMeshes(data_path("cool.w"));
 	walkmesh = &ret->lookup("WalkMesh");
 	return ret;
 });
 
-PlayMode::PlayMode() : scene(*phonebank_scene) {
+PlayMode::PlayMode() : scene(*cool_scene) {
 	//create a player transform:
 	scene.transforms.emplace_back();
 	player.transform = &scene.transforms.back();
@@ -66,6 +66,20 @@ PlayMode::PlayMode() : scene(*phonebank_scene) {
 	//start player walking at nearest walk point:
 	player.at = walkmesh->nearest_walk_point(player.transform->position);
 
+	for (auto& transform : scene.transforms) {
+		if (transform.name.substr(0, 6) == "Turtle") {
+			turtles[num_turtles++].transform = &transform;
+		}
+	}
+	std::default_random_engine gen;
+	std::uniform_real_distribution<float> distribution(0, 1);
+	for (int i = 0; i < num_turtles; i++) {
+		turtles[i].at = walkmesh->nearest_walk_point(turtles[i].transform->position);
+		float angle = distribution(gen) * acos(-1.f) * 2;
+		turtles[i].dir.x = cosf(angle);
+		turtles[i].dir.y = sinf(angle);	
+		turtles[i].dir *= distribution(gen) + 0.5;
+	}
 }
 
 PlayMode::~PlayMode() {
@@ -137,21 +151,9 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 }
 
 void PlayMode::update(float elapsed) {
-	//player walking:
-	{
-		//combine inputs into a move:
-		constexpr float PlayerSpeed = 3.0f;
-		glm::vec2 move = glm::vec2(0.0f);
-		if (left.pressed && !right.pressed) move.x =-1.0f;
-		if (!left.pressed && right.pressed) move.x = 1.0f;
-		if (down.pressed && !up.pressed) move.y =-1.0f;
-		if (!down.pressed && up.pressed) move.y = 1.0f;
-
-		//make it so that moving diagonally doesn't go faster:
-		if (move != glm::vec2(0.0f)) move = glm::normalize(move) * PlayerSpeed * elapsed;
-
+	auto do_move = [&](WalkPoint& st, Scene::Transform* transform, glm::vec2 move) {
 		//get move in world coordinate system:
-		glm::vec3 remain = player.transform->make_local_to_world() * glm::vec4(move.x, move.y, 0.0f, 0.0f);
+		glm::vec3 remain = transform->make_local_to_world() * glm::vec4(move.x, move.y, 0.0f, 0.0f);
 
 		//using a for() instead of a while() here so that if walkpoint gets stuck in
 		// some awkward case, code will not infinite loop:
@@ -159,8 +161,8 @@ void PlayMode::update(float elapsed) {
 			if (remain == glm::vec3(0.0f)) break;
 			WalkPoint end;
 			float time;
-			walkmesh->walk_in_triangle(player.at, remain, &end, &time);
-			player.at = end;
+			walkmesh->walk_in_triangle(st, remain, &end, &time);
+			st = end;
 			if (time == 1.0f) {
 				//finished within triangle:
 				remain = glm::vec3(0.0f);
@@ -170,16 +172,16 @@ void PlayMode::update(float elapsed) {
 			remain *= (1.0f - time);
 			//try to step over edge:
 			glm::quat rotation;
-			if (walkmesh->cross_edge(player.at, &end, &rotation)) {
+			if (walkmesh->cross_edge(st, &end, &rotation)) {
 				//stepped to a new triangle:
-				player.at = end;
+				st = end;
 				//rotate step to follow surface:
 				remain = rotation * remain;
 			} else {
 				//ran into a wall, bounce / slide along it:
-				glm::vec3 const &a = walkmesh->vertices[player.at.indices.x];
-				glm::vec3 const &b = walkmesh->vertices[player.at.indices.y];
-				glm::vec3 const &c = walkmesh->vertices[player.at.indices.z];
+				glm::vec3 const &a = walkmesh->vertices[st.indices.x];
+				glm::vec3 const &b = walkmesh->vertices[st.indices.y];
+				glm::vec3 const &c = walkmesh->vertices[st.indices.z];
 				glm::vec3 along = glm::normalize(b-a);
 				glm::vec3 normal = glm::normalize(glm::cross(b-a, c-a));
 				glm::vec3 in = glm::cross(normal, along);
@@ -201,25 +203,54 @@ void PlayMode::update(float elapsed) {
 		}
 
 		//update player's position to respect walking:
-		player.transform->position = walkmesh->to_world_point(player.at);
+		transform->position = walkmesh->to_world_point(st);
 
 		{ //update player's rotation to respect local (smooth) up-vector:
 			
 			glm::quat adjust = glm::rotation(
-				player.transform->rotation * glm::vec3(0.0f, 0.0f, 1.0f), //current up vector
-				walkmesh->to_world_smooth_normal(player.at) //smoothed up vector at walk location
+				transform->rotation * glm::vec3(0.0f, 0.0f, 1.0f), //current up vector
+				walkmesh->to_world_smooth_normal(st) //smoothed up vector at walk location
 			);
-			player.transform->rotation = glm::normalize(adjust * player.transform->rotation);
+			transform->rotation = glm::normalize(adjust * transform->rotation);
 		}
 
-		/*
-		glm::mat4x3 frame = camera->transform->make_local_to_parent();
-		glm::vec3 right = frame[0];
-		//glm::vec3 up = frame[1];
-		glm::vec3 forward = -frame[2];
+	};
 
-		camera->transform->position += move.x * right + move.y * forward;
-		*/
+	//player walking:
+	{
+		//combine inputs into a move:
+		constexpr float PlayerSpeed = 3.0f;
+		glm::vec2 move = glm::vec2(0.0f);
+		if (left.pressed && !right.pressed) move.x =-1.0f;
+		if (!left.pressed && right.pressed) move.x = 1.0f;
+		if (down.pressed && !up.pressed) move.y =-1.0f;
+		if (!down.pressed && up.pressed) move.y = 1.0f;
+
+		//make it so that moving diagonally doesn't go faster:
+		if (move != glm::vec2(0.0f)) move = glm::normalize(move) * PlayerSpeed * elapsed;
+
+		do_move(player.at, player.transform, move);
+	}
+
+	//turtle walking:
+	{
+		for (int i = 0; i < num_turtles; i++) {
+			if (turtles[i].dead) {
+				turtles[i].transform->position = glm::vec3(0,0,0);
+			} else {
+				do_move(turtles[i].at, turtles[i].transform, turtles[i].dir * elapsed * 5.f);
+			}
+		}
+	}
+
+	{ // check for collision between player and turtle
+		for (int i = 0; i < num_turtles; i++) {
+			if (turtles[i].dead) continue;
+			float dist = glm::distance(turtles[i].transform->position, player.transform->position);
+			if (dist < 1.f) {
+				turtles[i].dead = true;
+			}
+		}
 	}
 
 	//reset button press counters:
