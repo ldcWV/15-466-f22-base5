@@ -42,8 +42,24 @@ WalkMesh::WalkMesh(std::vector< glm::vec3 > const &vertices_, std::vector< glm::
 
 //project pt to the plane of triangle a,b,c and return the barycentric weights of the projected point:
 glm::vec3 barycentric_weights(glm::vec3 const &a, glm::vec3 const &b, glm::vec3 const &c, glm::vec3 const &pt) {
-	//TODO: implement!
-	return glm::vec3(0.25f, 0.25f, 0.5f);
+	glm::vec3 v1 = b-a;
+	glm::vec3 v2 = c-a;
+	glm::vec3 n = glm::normalize(glm::cross(v1, v2));
+	glm::vec3 v = pt-a;
+	glm::vec3 proj = pt - glm::dot(v,n)*n;
+	
+	auto area = [n](glm::vec3 a, glm::vec3 b, glm::vec3 c) {
+		glm::vec3 buh = glm::cross(b-a, c-a);
+		int sign = glm::dot(buh, n) > 0 ? 1 : -1;
+		return 0.5f * sign * glm::length(buh);
+	};
+	
+	float tot = area(a,b,c);
+	return glm::vec3(
+		area(proj, b, c),
+		area(proj, c, a),
+		area(proj, a, b)
+	) / tot;
 }
 
 WalkPoint WalkMesh::nearest_walk_point(glm::vec3 const &world_point) const {
@@ -122,8 +138,10 @@ void WalkMesh::walk_in_triangle(WalkPoint const &start, glm::vec3 const &step, W
 
 	glm::vec3 step_coords;
 	{ //project 'step' into a barycentric-coordinates direction:
-		//TODO
-		step_coords = glm::vec3(0.0f);
+		glm::vec3 const &a = vertices[start.indices.x];
+		glm::vec3 const &b = vertices[start.indices.y];
+		glm::vec3 const &c = vertices[start.indices.z];
+		step_coords = barycentric_weights(a, b, c, a+step) - glm::vec3(1,0,0);
 	}
 	
 	//if no edge is crossed, event will just be taking the whole step:
@@ -132,10 +150,33 @@ void WalkMesh::walk_in_triangle(WalkPoint const &start, glm::vec3 const &step, W
 
 	//figure out which edge (if any) is crossed first.
 	// set time and end appropriately.
-	//TODO
+	int min_idx = -1;
+	for (int i = 0; i < 3; i++) {
+		if (start.weights[i] * step_coords[i] < 0) {
+			float t = -start.weights[i] / step_coords[i];
+			if (t < time) {
+				time = t;
+				min_idx = i;
+			}
+		}
+	}
+	end.weights = start.weights + step_coords * time;
+	if (min_idx != -1) end.weights[min_idx] = 0.f; // take care of rounding errors
 
 	//Remember: our convention is that when a WalkPoint is on an edge,
 	// then wp.weights.z == 0.0f (so will likely need to re-order the indices)
+	if (min_idx != -1) {
+		for (int i = 0; i < 2 - min_idx; i++) {
+			float tmp = end.weights[2];
+			int tmp2 = end.indices[2];
+			end.weights[2] = end.weights[1];
+			end.indices[2] = end.indices[1];
+			end.weights[1] = end.weights[0];
+			end.indices[1] = end.indices[0];
+			end.weights[0] = tmp;
+			end.indices[0] = tmp2;
+		}
+	}
 }
 
 bool WalkMesh::cross_edge(WalkPoint const &start, WalkPoint *end_, glm::quat *rotation_) const {
@@ -149,14 +190,29 @@ bool WalkMesh::cross_edge(WalkPoint const &start, WalkPoint *end_, glm::quat *ro
 	glm::uvec2 edge = glm::uvec2(start.indices);
 
 	//check if 'edge' is a non-boundary edge:
-	if (edge.x == edge.y /* <-- TODO: use a real check, this is just here so code compiles */) {
+	auto f = next_vertex.find(glm::uvec2(start.indices.y, start.indices.x));
+	if (f != next_vertex.end()) {
 		//it is!
 
 		//make 'end' represent the same (world) point, but on triangle (edge.y, edge.x, [other point]):
-		//TODO
+		end = start;
+		end.indices.x = start.indices.y;
+		end.indices.y = start.indices.x;
+		end.indices.z = f->second;
+		end.weights.x = start.weights.y;
+		end.weights.y = start.weights.x;
+		end.weights.z = start.weights.z;
 
 		//make 'rotation' the rotation that takes (start.indices)'s normal to (end.indices)'s normal:
-		//TODO
+		glm::vec3 a = vertices[start.indices.x];
+		glm::vec3 b = vertices[start.indices.y];
+		glm::vec3 c = vertices[start.indices.z];
+		glm::vec3 ap = vertices[end.indices.x];
+		glm::vec3 bp = vertices[end.indices.y];
+		glm::vec3 cp = vertices[end.indices.z];
+		glm::vec3 start_normal = glm::normalize(glm::cross(b-a,c-a));
+		glm::vec3 end_normal = glm::normalize(glm::cross(bp-ap,cp-ap));
+		rotation = glm::rotation(start_normal,end_normal); //identity quat (wxyz init order)
 
 		return true;
 	} else {
